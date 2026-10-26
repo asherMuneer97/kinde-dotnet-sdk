@@ -97,6 +97,34 @@ namespace Kinde.Api.Test.Agents
             Assert.Contains("error_description=\"bad \\\"value\\\" with \\\\ backslash\"", challenge);
         }
 
+        [Theory]
+        [InlineData("IDX10503: Token validation failed.\nKeys tried: '[PII]'.\nExceptions: '...'")]
+        [InlineData("line one\r\nline two")]
+        [InlineData("tab\tseparated")]
+        public void Build_RemovesLineBreaks_SoKestrelCanWriteTheHeader(string reason)
+        {
+            // Kestrel throws on a header containing control characters, which would turn the 401
+            // carrying resource_metadata into a 500 and break discovery for that request.
+            var challenge = KindeAuthChallenge.Build(
+                KindeAuthFailureKind.InvalidToken, MetadataUrl, reason);
+
+            Assert.DoesNotContain('\r', challenge);
+            Assert.DoesNotContain('\n', challenge);
+            Assert.DoesNotContain('\t', challenge);
+            Assert.Contains("resource_metadata", challenge);
+        }
+
+        [Fact]
+        public void Build_DropsNonAsciiCharacters()
+        {
+            // Also invalid in a Kestrel header value.
+            var challenge = KindeAuthChallenge.Build(
+                KindeAuthFailureKind.InvalidToken, MetadataUrl, "café — naïve \u0001");
+
+            Assert.All(challenge!, c => Assert.InRange(c, ' ', '~'));
+            Assert.Contains("caf", challenge);
+        }
+
         [Fact]
         public void Build_FallsBackToBareBearer_WhenThereIsNothingToAdvertise()
         {

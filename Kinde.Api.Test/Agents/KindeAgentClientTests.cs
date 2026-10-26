@@ -510,6 +510,28 @@ namespace Kinde.Api.Test.Agents
             Assert.Contains("registration_endpoint", exception.Message);
         }
 
+        [Theory]
+        [InlineData(@"""code_challenge_methods_supported"":null")]
+        [InlineData(@"""code_challenge_methods_supported"":[]")]
+        [InlineData(@"""code_challenge_methods_supported"":[""plain""]")]
+        public async Task GetDiscoveryDocumentAsync_RefusesWithoutS256(string methods)
+        {
+            // MCP requires refusing unless S256 is advertised; an absent or null list is not a
+            // licence to continue, and must not throw NullReferenceException either.
+            var handler = new RouteHandler();
+            handler.Map("/.well-known/oauth-authorization-server/",
+                @"{""issuer"":""https://example.kinde.com/oauth2/agents/abc123"",
+                   ""authorization_endpoint"":""a"",""token_endpoint"":""t""," + methods + "}");
+
+            var client = new KindeAgentClient(
+                Options(), new HttpClient(handler), new InMemoryStore());
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => client.GetDiscoveryDocumentAsync());
+
+            Assert.Contains("S256", exception.Message);
+        }
+
         [Fact]
         public void Constructor_ValidatesTheOptions()
         {

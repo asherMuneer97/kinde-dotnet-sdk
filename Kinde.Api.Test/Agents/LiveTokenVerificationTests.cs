@@ -29,6 +29,64 @@ namespace Kinde.Api.Test.Agents
         // real tenant without also switching on the whole real-API integration suite.
         private static bool Enabled => TestConfiguration.Instance.AgentAuth != null;
 
+        /// <summary>
+        /// The configured agent token, when there is one that has not expired.
+        /// </summary>
+        /// <remarks>
+        /// An agent token cannot be minted without a consent step, so the one in appsettings is
+        /// pasted in by hand and ages out within a day. Letting that fail the suite would be a
+        /// false alarm that trains people to ignore red builds, so a stale token skips instead.
+        /// </remarks>
+        private bool TryGetUsableToken(out string token)
+        {
+            token = TestConfiguration.Instance.AgentAccessToken ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _output.WriteLine("Skipped: set KindeAgentAuth:AccessToken to a real agent token.");
+                return false;
+            }
+
+            var expiresAt = ReadExpiry(token);
+            if (expiresAt.HasValue && expiresAt.Value <= DateTimeOffset.UtcNow)
+            {
+                _output.WriteLine(
+                    $"Skipped: the configured agent token expired at {expiresAt:u}. Get a fresh "
+                    + "one from the Demo and update KindeAgentAuth:AccessToken.");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Reads <c>exp</c> without validating anything. Diagnostic only.</summary>
+        private static DateTimeOffset? ReadExpiry(string token)
+        {
+            var parts = token.Split('.');
+            if (parts.Length != 3)
+            {
+                return null;
+            }
+
+            try
+            {
+                var payload = parts[1].Replace('-', '+').Replace('_', '/');
+                payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+
+                using var document = System.Text.Json.JsonDocument.Parse(
+                    Convert.FromBase64String(payload));
+
+                return document.RootElement.TryGetProperty("exp", out var exp)
+                       && exp.TryGetInt64(out var seconds)
+                    ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+                    : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private bool SkipIfNotConfigured(out KindeAgentAuthOptions options)
         {
             options = TestConfiguration.Instance.AgentAuth!;
@@ -89,9 +147,16 @@ namespace Kinde.Api.Test.Agents
 
             // Confirms the endpoint and our credentials are right: a wrong secret surfaces as
             // Unavailable rather than InvalidToken, which is the distinction that matters here.
+            //
+            // The garbage must be JWT-shaped. The verifier rejects anything else before it calls
+            // Kinde, so a shapeless string would make this pass against a wrong secret or a wrong
+            // endpoint and prove nothing.
+            const string JwtShapedGarbage =
+                "not-a-real.access-token.signature";
+
             using var client = new HttpClient();
             var context = await new IntrospectionTokenVerifier(options, client)
-                .VerifyAsync("not-a-real-token");
+                .VerifyAsync(JwtShapedGarbage);
 
             _output.WriteLine($"Failure: {context.FailureKind} - {context.FailureReason}");
 
@@ -107,10 +172,8 @@ namespace Kinde.Api.Test.Agents
                 return;
             }
 
-            var token = TestConfiguration.Instance.AgentAccessToken;
-            if (string.IsNullOrWhiteSpace(token))
+            if (!TryGetUsableToken(out var token))
             {
-                _output.WriteLine("Skipped: set KindeAgentAuth:AccessToken to a real agent token.");
                 return;
             }
 
@@ -139,10 +202,8 @@ namespace Kinde.Api.Test.Agents
                 return;
             }
 
-            var token = TestConfiguration.Instance.AgentAccessToken;
-            if (string.IsNullOrWhiteSpace(token))
+            if (!TryGetUsableToken(out var token))
             {
-                _output.WriteLine("Skipped: set KindeAgentAuth:AccessToken to a real agent token.");
                 return;
             }
 

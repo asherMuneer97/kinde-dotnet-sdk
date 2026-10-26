@@ -217,6 +217,25 @@ namespace Kinde.Api.Test.Agents
         }
 
         [Fact]
+        public async Task AFailureReasonContainingNewlines_StillProducesA401()
+        {
+            // IdentityModel messages span several lines. Writing one into a header unchanged
+            // makes Kestrel throw, so the client gets a 500 with no resource_metadata and
+            // discovery fails for that request.
+            var multiline = "IDX10503: Token validation failed.\nKeys tried: '[PII]'.\r\nExceptions: '...'";
+            using var host = CreateHost(new StubVerifier(KindeAuthContext.Invalid(multiline)));
+            await host.StartAsync();
+
+            var response = await Get(host, "/mcp", "Bearer bad-token");
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+            var challenge = Assert.Single(response.Headers.WwwAuthenticate).ToString();
+            Assert.Contains("resource_metadata", challenge);
+            Assert.DoesNotContain('\n', challenge);
+        }
+
+        [Fact]
         public async Task ProtectedEndpoint_Returns503WithNoChallenge_WhenKindeIsUnavailable()
         {
             // An outage must not look like an auth failure, or the agent re-authorizes instead

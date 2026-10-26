@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 
 namespace Kinde.Api.Agents
 {
@@ -93,6 +94,39 @@ namespace Kinde.Api.Agents
         // Every value is quoted and escaped: an unescaped quote in a URL or description would
         // truncate the header and lose the parameters that follow it.
         private static string Parameter(string name, string value) =>
-            $"{name}=\"{value.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+            $"{name}=\"{Sanitize(value).Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+
+        /// <summary>
+        /// Reduces a value to characters that are legal in an HTTP header.
+        /// </summary>
+        /// <remarks>
+        /// IdentityModel validation messages can contain newlines -- IDX10503 lists each candidate
+        /// key on its own line -- and those reach here through <c>FailureReason</c>. Kestrel throws
+        /// on a response header containing control or non-ASCII characters, which would turn a 401
+        /// carrying <c>resource_metadata</c> into a 500 and break discovery for that request.
+        /// </remarks>
+        private static string Sanitize(string value)
+        {
+            var builder = new StringBuilder(value.Length);
+
+            foreach (var character in value)
+            {
+                if (character is '\r' or '\n' or '\t')
+                {
+                    // Keep the words, lose the line break.
+                    if (builder.Length > 0 && builder[^1] != ' ')
+                    {
+                        builder.Append(' ');
+                    }
+                }
+                else if (character >= ' ' && character <= '~')
+                {
+                    builder.Append(character);
+                }
+                // Anything else, control or non-ASCII, is dropped.
+            }
+
+            return builder.ToString().Trim();
+        }
     }
 }
