@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using Kinde.Api.Agents;
@@ -207,18 +208,34 @@ namespace Kinde.Api.Test.Agents
                 return;
             }
 
-            // Proves the issuer and audience expectations are right against a token Kinde actually
-            // issued, which is the part that cannot be confirmed with a synthetic token.
+            // Runs both verifiers over one token Kinde actually issued. The claim names differ
+            // between the two paths -- the JWT carries scp and azp where introspection returns
+            // scope and client_id -- so a synthetic token cannot prove they agree.
             using var client = new HttpClient();
             var local = await new JwtTokenVerifier(options, client).VerifyAsync(token!);
+            var remote = await new IntrospectionTokenVerifier(options, client).VerifyAsync(token!);
 
             _output.WriteLine($"Expected issuer: {options.ExpectedTokenIssuer}");
             _output.WriteLine($"Expected audience: {options.ResourceUrl}");
-            _output.WriteLine($"Authenticated: {local.IsAuthenticated}");
-            _output.WriteLine($"Failure: {local.FailureKind} - {local.FailureReason}");
+            _output.WriteLine($"Local  : {local.IsAuthenticated} sub={local.Subject} "
+                              + $"client={local.ClientId} scopes=[{string.Join(" ", local.Scopes)}]");
+            _output.WriteLine($"Remote : {remote.IsAuthenticated} sub={remote.Subject} "
+                              + $"client={remote.ClientId} scopes=[{string.Join(" ", remote.Scopes)}]");
+            _output.WriteLine($"Local failure : {local.FailureKind} - {local.FailureReason}");
+            _output.WriteLine($"Remote failure: {remote.FailureKind} - {remote.FailureReason}");
 
             Assert.True(local.IsAuthenticated, local.FailureReason);
-            Assert.Equal(options.ExpectedTokenIssuer, options.NormalizedDomain);
+            Assert.True(remote.IsAuthenticated, remote.FailureReason);
+
+            // The two paths must describe the same token. Revocation is deliberately out of
+            // scope here: introspection would catch it and local validation would not, which is
+            // the documented trade-off between the modes rather than a disagreement.
+            Assert.Equal(remote.Subject, local.Subject);
+            Assert.Equal(remote.ClientId, local.ClientId);
+            Assert.Equal(remote.OrganizationCode, local.OrganizationCode);
+            Assert.Equal(remote.Scopes.OrderBy(s => s, StringComparer.Ordinal),
+                local.Scopes.OrderBy(s => s, StringComparer.Ordinal));
+            Assert.Contains(options.ResourceUrl, local.Audiences);
         }
     }
 }
