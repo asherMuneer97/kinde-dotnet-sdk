@@ -98,6 +98,25 @@ namespace Kinde.Api.Agents.Client
         }
 
         /// <summary>
+        /// Whether a redirect URI is the loopback or custom-scheme kind a native agent uses.
+        /// </summary>
+        private static bool IsNativeRedirect(string redirectUri)
+        {
+            if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+
+            if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            {
+                // A custom scheme, such as my-agent://callback.
+                return true;
+            }
+
+            return uri.IsLoopback;
+        }
+
+        /// <summary>
         /// Rejects a discovery endpoint that is missing, relative, or not https.
         /// </summary>
         private void RequireHttpsEndpoint(string? value, string name, bool required)
@@ -178,7 +197,10 @@ namespace Kinde.Api.Agents.Client
                 ["redirect_uris"] = new[] { _options.RedirectUri },
                 ["grant_types"] = new[] { "authorization_code", "refresh_token" },
                 ["response_types"] = new[] { "code" },
-                ["token_endpoint_auth_method"] = "client_secret_post"
+                ["token_endpoint_auth_method"] = "client_secret_post",
+                // OIDC registration defaults an omitted application_type to "web", which can
+                // reject the loopback and custom-scheme redirects a desktop agent needs.
+                ["application_type"] = IsNativeRedirect(_options.RedirectUri) ? "native" : "web"
             };
 
             using var request = new HttpRequestMessage(HttpMethod.Post, discovery.RegistrationEndpoint)
@@ -261,13 +283,33 @@ namespace Kinde.Api.Agents.Client
         /// <param name="code">The code from the callback.</param>
         /// <param name="returnedState">The state from the callback, checked against the request.</param>
         /// <param name="request">The request produced by <see cref="CreateAuthorizationRequestAsync"/>.</param>
+        /// <param name="returnedIssuer">
+        /// The <c>iss</c> parameter from the callback, when the authorization server sent one.
+        /// Checking it (RFC 9207) stops a code issued by one server being redeemed at another's
+        /// token endpoint, which is the authorization-server mix-up attack.
+        /// </param>
         public async Task<KindeAgentToken> ExchangeCodeAsync(
             string code,
             string returnedState,
             KindeAgentAuthorizationRequest request,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? returnedIssuer = null)
         {
             ArgumentNullException.ThrowIfNull(request);
+
+            if (!string.IsNullOrEmpty(returnedIssuer))
+            {
+                var expectedIssuer =
+                    $"{_options.NormalizedDomain}/oauth2/agents/{_options.AgentApplicationId}";
+
+                if (!string.Equals(returnedIssuer, expectedIssuer, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"The callback declares issuer '{returnedIssuer}', but this authorization "
+                        + $"request went to '{expectedIssuer}'. The code may belong to a different "
+                        + "authorization server.");
+                }
+            }
 
             if (string.IsNullOrEmpty(code))
             {

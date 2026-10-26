@@ -807,6 +807,23 @@ namespace Kinde.Api.Test.Agents
         }
 
         [Fact]
+        public void EmptyScopeOrPermissionLists_AreRejectedWhenThePolicyIsBuilt()
+        {
+            // An empty list has nothing to fail on, so the policy would authorize every request.
+            // That is easy to reach when the values come from configuration and are missing.
+            Assert.Throws<ArgumentException>(
+                () => new AuthorizationPolicyBuilder().RequireKindeScope());
+            Assert.Throws<ArgumentException>(
+                () => new AuthorizationPolicyBuilder().RequireAnyKindeScope());
+            Assert.Throws<ArgumentException>(
+                () => new AuthorizationPolicyBuilder().RequireKindePermission());
+            Assert.Throws<ArgumentException>(
+                () => new AuthorizationPolicyBuilder().RequireAnyKindePermission());
+            Assert.Throws<ArgumentException>(
+                () => new AuthorizationPolicyBuilder().RequireKindeScope("  "));
+        }
+
+        [Fact]
         public void AddKindeAgentAuth_Throws_WhenTheConfigurationSectionIsMissing()
         {
             var services = new ServiceCollection();

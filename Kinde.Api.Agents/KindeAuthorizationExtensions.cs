@@ -15,8 +15,25 @@ namespace Kinde.Api.Agents
     {
         public KindeScopeRequirement(IReadOnlyList<string> scopes, bool requireAll)
         {
-            Scopes = scopes ?? throw new ArgumentNullException(nameof(scopes));
+            Scopes = Require(scopes, nameof(scopes));
             RequireAll = requireAll;
+        }
+
+        // An empty list would authorize every request: the check has nothing to fail on. That is
+        // easy to reach when the list comes from configuration and the setting is missing, so the
+        // mistake surfaces here, when the policy is built, rather than silently failing open.
+        internal static IReadOnlyList<string> Require(IReadOnlyList<string> values, string name)
+        {
+            ArgumentNullException.ThrowIfNull(values, name);
+
+            if (values.Count == 0 || values.Any(string.IsNullOrWhiteSpace))
+            {
+                throw new ArgumentException(
+                    "At least one non-empty value is required; an empty list would authorize "
+                    + "every request.", name);
+            }
+
+            return values;
         }
 
         public IReadOnlyList<string> Scopes { get; }
@@ -35,7 +52,7 @@ namespace Kinde.Api.Agents
     {
         public KindePermissionRequirement(IReadOnlyList<string> permissions, bool requireAll)
         {
-            Permissions = permissions ?? throw new ArgumentNullException(nameof(permissions));
+            Permissions = KindeScopeRequirement.Require(permissions, nameof(permissions));
             RequireAll = requireAll;
         }
 

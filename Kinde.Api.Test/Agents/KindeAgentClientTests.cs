@@ -547,6 +547,39 @@ namespace Kinde.Api.Test.Agents
         }
 
         [Fact]
+        public async Task GetOrRegisterAsync_DeclaresNativeForALoopbackRedirect()
+        {
+            // OIDC defaults an omitted application_type to "web", which can reject the loopback
+            // redirect a desktop agent needs.
+            var (client, handler) = Create();
+            handler.Map("/register", @"{""client_id"":""dyn_123""}");
+
+            await client.GetOrRegisterAsync();
+
+            Assert.Contains("\"application_type\":\"native\"", handler.BodyFor("/register"));
+        }
+
+        [Fact]
+        public async Task ExchangeCodeAsync_RejectsACallbackFromAnotherIssuer()
+        {
+            // RFC 9207: without this a code from one authorization server could be redeemed at
+            // another client's token endpoint.
+            var (client, handler) = Create();
+            handler.Map("/register", @"{""client_id"":""dyn_123""}");
+            handler.Map("/token", @"{""access_token"":""at_1"",""expires_in"":3600}");
+
+            var request = await client.CreateAuthorizationRequestAsync();
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => client.ExchangeCodeAsync(
+                    "the-code", request.State, request,
+                    returnedIssuer: "https://attacker.kinde.com/oauth2/agents/abc123"));
+
+            Assert.Contains("authorization server", exception.Message);
+            Assert.Equal(0, handler.CountFor("/token"));
+        }
+
+        [Fact]
         public void Constructor_ValidatesTheOptions()
         {
             var options = Options();
