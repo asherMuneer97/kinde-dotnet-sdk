@@ -381,18 +381,32 @@ namespace Kinde.Api.Test.Agents
             var request = await client.CreateAuthorizationRequestAsync();
             await client.ExchangeCodeAsync("the-code", request.State, request);
 
-            // Stand in for the winner: a fresh token with a rotated refresh token is already stored.
+            var tokenKey = $"{Options().NormalizedDomain}|{AppId}|{ResourceUrl}|token";
             var winner = @"{""access_token"":""at_winner"",""expires_in"":3600,
                             ""refresh_token"":""rt_rotated"",""obtained_at"":""" +
                          DateTimeOffset.UtcNow.ToString("o") + @"""}";
-            await store.SetAsync(
-                $"{Options().NormalizedDomain}|{AppId}|{ResourceUrl}|token", winner);
 
+            // The expired token stays in the store, so the call genuinely enters the refresh path.
+            // The winner lands only while that refresh is in flight, which is the race: our
+            // refresh then fails with invalid_grant for a token the winner already rotated.
             handler.Map("/token", @"{""error"":""invalid_grant""}", HttpStatusCode.BadRequest);
+            handler.OnRequest = fragment =>
+            {
+                if (fragment == "/token")
+                {
+                    store.SetAsync(tokenKey, winner).GetAwaiter().GetResult();
+                }
+            };
+
             var result = await client.GetCurrentTokenAsync();
 
             Assert.NotNull(result);
             Assert.Equal("at_winner", result!.AccessToken);
+
+            // And the winner must survive: deleting it is what this guard exists to prevent.
+            var stillStored = await store.GetAsync(tokenKey);
+            Assert.NotNull(stillStored);
+            Assert.Contains("at_winner", stillStored);
         }
 
         [Fact]
@@ -499,7 +513,7 @@ namespace Kinde.Api.Test.Agents
             var handler = new RouteHandler();
             handler.Map("/.well-known/oauth-authorization-server/",
                 @"{""issuer"":""https://example.kinde.com/oauth2/agents/abc123"",
-                   ""authorization_endpoint"":""a"",""token_endpoint"":""t"",
+                   ""authorization_endpoint"":""https://example.kinde.com/oauth2/agents/abc123/authorize"",""token_endpoint"":""https://example.kinde.com/oauth2/agents/abc123/token"",
                    ""code_challenge_methods_supported"":[""S256""]}");
             var client = new KindeAgentClient(
                 Options(), new HttpClient(handler), new InMemoryStore());
@@ -521,7 +535,7 @@ namespace Kinde.Api.Test.Agents
             var handler = new RouteHandler();
             handler.Map("/.well-known/oauth-authorization-server/",
                 @"{""issuer"":""https://example.kinde.com/oauth2/agents/abc123"",
-                   ""authorization_endpoint"":""a"",""token_endpoint"":""t""," + methods + "}");
+                   ""authorization_endpoint"":""https://example.kinde.com/oauth2/agents/abc123/authorize"",""token_endpoint"":""https://example.kinde.com/oauth2/agents/abc123/token""," + methods + "}");
 
             var client = new KindeAgentClient(
                 Options(), new HttpClient(handler), new InMemoryStore());
@@ -578,6 +592,9 @@ namespace Kinde.Api.Test.Agents
             public string BodyFor(string fragment) =>
                 _bodies.TryGetValue(fragment, out var body) ? body : string.Empty;
 
+            /// <summary>Runs as a matched request is served, for simulating a concurrent change.</summary>
+            public Action<string>? OnRequest { get; set; }
+
             protected override async Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request, CancellationToken cancellationToken)
             {
@@ -595,6 +612,8 @@ namespace Kinde.Api.Test.Agents
                     {
                         _bodies[route.Key] = await request.Content.ReadAsStringAsync();
                     }
+
+                    OnRequest?.Invoke(route.Key);
 
                     return new HttpResponseMessage(route.Value.Status)
                     {

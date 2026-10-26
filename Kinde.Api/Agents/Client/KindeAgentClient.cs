@@ -71,19 +71,14 @@ namespace Kinde.Api.Agents.Client
                     + $"issuer '{document.Issuer}', but '{expectedIssuer}' was expected.");
             }
 
-            if (string.IsNullOrEmpty(document.TokenEndpoint))
-            {
-                throw new InvalidOperationException(
-                    $"The discovery document at {_options.AuthorizationServerMetadataUrl} has no "
-                    + "token_endpoint.");
-            }
-
-            if (string.IsNullOrEmpty(document.AuthorizationEndpoint))
-            {
-                throw new InvalidOperationException(
-                    $"The discovery document at {_options.AuthorizationServerMetadataUrl} has no "
-                    + "authorization_endpoint.");
-            }
+            // Each endpoint must be an absolute https URL. The issuer check above proves the
+            // document names the right server, not that the endpoints inside it do: an http value
+            // would downgrade the flow, and a relative one would produce a malformed request.
+            RequireHttpsEndpoint(document.TokenEndpoint, "token_endpoint", required: true);
+            RequireHttpsEndpoint(
+                document.AuthorizationEndpoint, "authorization_endpoint", required: true);
+            RequireHttpsEndpoint(
+                document.RegistrationEndpoint, "registration_endpoint", required: false);
 
             // The MCP authorization spec requires a client to refuse to proceed unless S256 is
             // advertised. An absent field is not a licence to continue: without verified support
@@ -100,6 +95,32 @@ namespace Kinde.Api.Agents.Client
             }
 
             return _discovery = document;
+        }
+
+        /// <summary>
+        /// Rejects a discovery endpoint that is missing, relative, or not https.
+        /// </summary>
+        private void RequireHttpsEndpoint(string? value, string name, bool required)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                if (!required)
+                {
+                    return;
+                }
+
+                throw new InvalidOperationException(
+                    $"The discovery document at {_options.AuthorizationServerMetadataUrl} has no "
+                    + $"{name}.");
+            }
+
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps)
+            {
+                throw new InvalidOperationException(
+                    $"The discovery document at {_options.AuthorizationServerMetadataUrl} declares "
+                    + $"{name} '{value}', which is not an absolute https URL.");
+            }
         }
 
         /// <summary>
@@ -176,9 +197,15 @@ namespace Kinde.Api.Agents.Client
                     $"Dynamic client registration failed ({(int)response.StatusCode}): {text}");
             }
 
-            var registration = Deserialize<KindeAgentRegistration>(text)
-                               ?? throw new InvalidOperationException(
-                                   "Dynamic client registration returned no client_id.");
+            var registration = Deserialize<KindeAgentRegistration>(text);
+
+            // Deserialization of "{}" yields an object with an empty ClientId, so a null check
+            // alone would cache a useless registration and send client_id= on every request.
+            if (registration == null || string.IsNullOrEmpty(registration.ClientId))
+            {
+                throw new InvalidOperationException(
+                    "Dynamic client registration returned no client_id.");
+            }
 
             await _store.SetAsync(key, text, cancellationToken).ConfigureAwait(false);
             return registration;

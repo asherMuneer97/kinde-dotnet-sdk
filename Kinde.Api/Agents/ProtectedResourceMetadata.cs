@@ -20,6 +20,7 @@ namespace Kinde.Api.Agents
 
         /// <summary>The JWKS endpoint, for clients that verify tokens themselves.</summary>
         [JsonPropertyName("jwks_uri")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? JwksUri { get; set; }
 
         /// <summary>Scopes this resource understands.</summary>
@@ -32,6 +33,7 @@ namespace Kinde.Api.Agents
 
         /// <summary>Optional display name.</summary>
         [JsonPropertyName("resource_name")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? ResourceName { get; set; }
 
         /// <summary>Builds the document from the configured options.</summary>

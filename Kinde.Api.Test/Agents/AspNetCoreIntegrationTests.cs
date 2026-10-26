@@ -158,6 +158,10 @@ namespace Kinde.Api.Test.Agents
             Assert.Equal(
                 "header",
                 document.RootElement.GetProperty("bearer_methods_supported")[0].GetString());
+
+            // Unset optional fields are omitted rather than emitted as null, which RFC 9728
+            // consumers can misread as a declared-but-empty value.
+            Assert.False(document.RootElement.TryGetProperty("resource_name", out _));
         }
 
         [Fact]
