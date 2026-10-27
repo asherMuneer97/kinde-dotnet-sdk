@@ -547,10 +547,23 @@ namespace Kinde.Api.Agents.Client
         private string RegistrationKey =>
             $"{_options.NormalizedDomain}|{_options.AgentApplicationId}|{_options.RedirectUri}|registration";
 
-        // The resource is part of the key: a token's audience is bound to it, so returning one
-        // issued for a different resource would be rejected by that resource server as if forged.
+        // Scoped like RegistrationKey, and for the same reason. The resource matters because a
+        // token's audience is bound to it. The client identity matters because a token belongs to
+        // the client it was issued to: sharing a key lets one instance return another client's
+        // token, and when refreshing that token fails with invalid_grant the cleanup path would
+        // delete it, ending the owning client's session.
         private string TokenKey =>
-            $"{_options.NormalizedDomain}|{_options.AgentApplicationId}|{_options.ResourceUrl}|token";
+            $"{_options.NormalizedDomain}|{_options.AgentApplicationId}|{ClientIdentity}"
+            + $"|{_options.ResourceUrl}|token";
+
+        /// <summary>
+        /// What identifies this client's own credentials: its configured id, or the redirect URI
+        /// its dynamic registration is bound to.
+        /// </summary>
+        private string ClientIdentity =>
+            string.IsNullOrWhiteSpace(_options.ClientId)
+                ? _options.RedirectUri
+                : _options.ClientId!;
 
         private async Task<T> GetJsonAsync<T>(string url, CancellationToken cancellationToken)
         {

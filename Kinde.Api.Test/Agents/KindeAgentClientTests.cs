@@ -381,7 +381,9 @@ namespace Kinde.Api.Test.Agents
             var request = await client.CreateAuthorizationRequestAsync();
             await client.ExchangeCodeAsync("the-code", request.State, request);
 
-            var tokenKey = $"{Options().NormalizedDomain}|{AppId}|{ResourceUrl}|token";
+            // Scoped to the client as well as the resource, so a second client cannot read or
+            // delete this one's token.
+            var tokenKey = $"{Options().NormalizedDomain}|{AppId}|{RedirectUri}|{ResourceUrl}|token";
             var winner = @"{""access_token"":""at_winner"",""expires_in"":3600,
                             ""refresh_token"":""rt_rotated"",""obtained_at"":""" +
                          DateTimeOffset.UtcNow.ToString("o") + @"""}";
@@ -431,6 +433,32 @@ namespace Kinde.Api.Test.Agents
 
             Assert.Equal("at_for_a", (await forA.GetCurrentTokenAsync())!.AccessToken);
             Assert.Null(await forB.GetCurrentTokenAsync());
+        }
+
+        [Fact]
+        public async Task TokensAreScopedToTheClient_NotJustTheResource()
+        {
+            // Two clients on the same domain, application and resource must not share a token
+            // entry. Reading another client's token would eventually refresh it with the wrong
+            // client_id, and the invalid_grant cleanup would end the owning client's session.
+            var store = new InMemoryStore();
+            var handler = new RouteHandler();
+            handler.Map("/.well-known/oauth-authorization-server/", DiscoveryJson);
+            handler.Map("/register", @"{""client_id"":""dyn_123""}");
+            handler.Map("/token",
+                @"{""access_token"":""at_for_first"",""expires_in"":3600,""refresh_token"":""rt_1""}");
+
+            var first = new KindeAgentClient(Options(), new HttpClient(handler), store);
+            var request = await first.CreateAuthorizationRequestAsync();
+            await first.ExchangeCodeAsync("the-code", request.State, request);
+
+            // Same domain, application and resource; a different client.
+            var otherOptions = Options();
+            otherOptions.ClientId = "https://other-agent.example.com/.well-known/oauth-client";
+            var second = new KindeAgentClient(otherOptions, new HttpClient(handler), store);
+
+            Assert.Equal("at_for_first", (await first.GetCurrentTokenAsync())!.AccessToken);
+            Assert.Null(await second.GetCurrentTokenAsync());
         }
 
         [Fact]

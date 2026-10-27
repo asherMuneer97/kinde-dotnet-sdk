@@ -266,6 +266,19 @@ namespace Kinde.Api.Test.Agents
         }
 
         [Fact]
+        public async Task VerifyAsync_RejectsAnAudienceDifferingOnlyByATrailingSlash()
+        {
+            // IdentityModel ignores a trailing slash by default, so this token would pass here
+            // and fail introspection, which compares ordinally. ResourceUrl is documented as
+            // matched byte for byte, and the two modes must agree.
+            var context = await CreateVerifier().VerifyAsync(
+                CreateToken(audience: ResourceUrl + "/"));
+
+            Assert.False(context.IsAuthenticated);
+            Assert.Equal(KindeAuthFailureKind.InvalidToken, context.FailureKind);
+        }
+
+        [Fact]
         public async Task VerifyAsync_RejectsATokenMintedForAnotherResource()
         {
             var context = await CreateVerifier().VerifyAsync(

@@ -95,6 +95,11 @@ namespace Kinde.Api.Agents
                 ValidIssuer = _options.ExpectedTokenIssuer,
                 ValidateAudience = true,
                 ValidAudience = _options.ResourceUrl,
+                // The library default is true, which would accept an aud differing from the
+                // Resource URL only by a trailing slash. Introspection compares ordinally, so the
+                // same token would pass here and fail there, and ResourceUrl is documented as
+                // matched byte for byte.
+                IgnoreTrailingSlashWhenValidatingAudience = false,
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKeys = configuration.SigningKeys,
                 ValidateLifetime = true,
